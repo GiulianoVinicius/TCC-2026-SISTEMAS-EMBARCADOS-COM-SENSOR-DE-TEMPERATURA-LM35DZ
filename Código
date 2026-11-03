@@ -1,0 +1,114 @@
+const int SENSOR = A1;
+
+// LEDs conforme as ligações físicas
+const int LED_AZUL = 7;
+const int LED_AMARELO = 3;
+const int LED_VERMELHO = 5;
+
+// Ventiladores controlados pelos MOSFETs
+const int FAN1 = 9;
+const int FAN2 = 10;
+
+// Limites de temperatura
+const float TEMP_AMARELO = 28.00;   // amarelo + fans ligam
+const float TEMP_VERMELHO = 30.00;  // vermelho
+const float FOLGA_FANS = 0.5;       // fans desligam abaixo de 27,50 °C
+
+// Velocidade das fans quando ligadas (0 a 255)
+const int PWM_FANS = 255;           // 100%
+
+int pwmAtual = 0;
+bool ventiladoresLigados = false;   // fora do loop para guardar o estado
+
+// Sobe/desce a velocidade aos poucos para evitar pico de corrente na USB
+void setVentiladores(bool ligar) {
+  int alvo = ligar ? PWM_FANS : 0;
+  while (pwmAtual != alvo) {
+    pwmAtual += (alvo > pwmAtual) ? 5 : -5;
+    pwmAtual = constrain(pwmAtual, 0, 255);
+    analogWrite(FAN1, pwmAtual);
+    analogWrite(FAN2, pwmAtual);
+    delay(10);
+  }
+}
+
+float lerTemperatura(int &leituraMedia, float &tensao) {
+  long soma = 0;
+  for (int i = 0; i < 20; i++) {
+    soma += analogRead(SENSOR);
+    delay(5);
+  }
+  leituraMedia = soma / 20;
+  tensao = leituraMedia * (1.1 / 1023.0);   // referência interna de 1,1 V
+  return tensao * 100.0;                    // LM35: 10 mV por °C
+}
+
+void setup() {
+  Serial.begin(9600);
+
+  analogReference(INTERNAL);   // referência de 1,1 V
+  analogRead(SENSOR);          // descarta a primeira leitura após trocar a referência
+  delay(100);
+
+  pinMode(LED_AZUL, OUTPUT);
+  pinMode(LED_AMARELO, OUTPUT);
+  pinMode(LED_VERMELHO, OUTPUT);
+  pinMode(FAN1, OUTPUT);
+  pinMode(FAN2, OUTPUT);
+
+  analogWrite(FAN1, 0);
+  analogWrite(FAN2, 0);
+
+  Serial.println("=== Sistema iniciado (9600 baud) ===");
+}
+
+void loop() {
+  int leitura;
+  float tensao;
+  float temperatura = lerTemperatura(leitura, tensao);
+
+  digitalWrite(LED_AZUL, LOW);
+  digitalWrite(LED_AMARELO, LOW);
+  digitalWrite(LED_VERMELHO, LOW);
+
+  const char* nomeLed;
+
+  // LEDs seguem as faixas de temperatura (sem folga)
+  if (temperatura >= TEMP_VERMELHO) {
+    digitalWrite(LED_VERMELHO, HIGH);
+    nomeLed = "VERMELHO";
+  } else if (temperatura >= TEMP_AMARELO) {
+    digitalWrite(LED_AMARELO, HIGH);
+    nomeLed = "AMARELO";
+  } else {
+    digitalWrite(LED_AZUL, HIGH);
+    nomeLed = "AZUL";
+  }
+
+  // Fans com folga: ligam em 28,00 °C, desligam abaixo de 27,50 °C
+  if (temperatura >= TEMP_AMARELO) {
+    ventiladoresLigados = true;
+  } else if (temperatura < TEMP_AMARELO - FOLGA_FANS) {
+    ventiladoresLigados = false;
+  }
+
+  Serial.print("Leitura: ");
+  Serial.print(leitura);
+  Serial.print(" | Tensao: ");
+  Serial.print(tensao, 4);
+  Serial.print(" V | Temperatura: ");
+  Serial.print(temperatura, 2);
+  Serial.print(" C | LED: ");
+  Serial.print(nomeLed);
+  Serial.print(" | Ventiladores: ");
+  Serial.println(ventiladoresLigados ? "LIGADOS (100%)" : "DESLIGADOS");
+
+  if (leitura < 3 || leitura > 1020) {
+    Serial.println("AVISO: leitura fora do normal, confira o LM35 (pino A1, 5V e GND).");
+  }
+
+  setVentiladores(ventiladoresLigados);
+
+  delay(1000);
+} 
+
